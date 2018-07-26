@@ -11,6 +11,9 @@ import (
 	"net/mail"
 	"strings"
 	"time"
+
+	"github.com/paulrosania/go-charset/charset"
+	qprintable "github.com/sloonz/go-qprintable"
 )
 
 const contentTypeMultipartMixed = "multipart/mixed"
@@ -47,10 +50,10 @@ func ParseEmailMessage(msg *mail.Message) (email Email, err error) {
 	case contentTypeMultipartAlternative:
 		email.TextBody, email.HTMLBody, email.EmbeddedFiles, err = parseMultipartAlternative(msg.Body, params["boundary"])
 	case contentTypeTextPlain:
-		message, _ := ioutil.ReadAll(msg.Body)
+		message, _ := parseText(params["charset"], msg.Header.Get("Content-Transfer-Encoding"), msg.Body)
 		email.TextBody = strings.TrimSuffix(string(message[:]), "\n")
 	case contentTypeTextHtml:
-		message, _ := ioutil.ReadAll(msg.Body)
+		message, _ := parseText(params["charset"], msg.Header.Get("Content-Transfer-Encoding"), msg.Body)
 		email.HTMLBody = strings.TrimSuffix(string(message[:]), "\n")
 	default:
 		err = fmt.Errorf("Unknown top level mime type: %s", contentType)
@@ -123,14 +126,14 @@ func parseMultipartRelated(msg io.Reader, boundary string) (textBody, htmlBody s
 
 		switch contentType {
 		case contentTypeTextPlain:
-			ppContent, err := ioutil.ReadAll(part)
+			ppContent, err := parseText(params["charset"], part.Header.Get("Content-Transfer-Encoding"), part)
 			if err != nil {
 				return textBody, htmlBody, embeddedFiles, err
 			}
 
 			textBody += strings.TrimSuffix(string(ppContent[:]), "\n")
 		case contentTypeTextHtml:
-			ppContent, err := ioutil.ReadAll(part)
+			ppContent, err := parseText(params["charset"], part.Header.Get("Content-Transfer-Encoding"), part)
 			if err != nil {
 				return textBody, htmlBody, embeddedFiles, err
 			}
@@ -180,14 +183,14 @@ func parseMultipartAlternative(msg io.Reader, boundary string) (textBody, htmlBo
 
 		switch contentType {
 		case contentTypeTextPlain:
-			ppContent, err := ioutil.ReadAll(part)
+			ppContent, err := parseText(params["charset"], part.Header.Get("Content-Transfer-Encoding"), part)
 			if err != nil {
 				return textBody, htmlBody, embeddedFiles, err
 			}
 
 			textBody += strings.TrimSuffix(string(ppContent[:]), "\n")
 		case contentTypeTextHtml:
-			ppContent, err := ioutil.ReadAll(part)
+			ppContent, err := parseText(params["charset"], part.Header.Get("Content-Transfer-Encoding"), part)
 			if err != nil {
 				return textBody, htmlBody, embeddedFiles, err
 			}
@@ -245,14 +248,14 @@ func parseMultipartMixed(msg io.Reader, boundary string) (textBody, htmlBody str
 				return textBody, htmlBody, attachments, embeddedFiles, err
 			}
 		} else if contentType == contentTypeTextPlain {
-			ppContent, err := ioutil.ReadAll(part)
+			ppContent, err := parseText(params["charset"], part.Header.Get("Content-Transfer-Encoding"), part)
 			if err != nil {
 				return textBody, htmlBody, attachments, embeddedFiles, err
 			}
 
 			textBody += strings.TrimSuffix(string(ppContent[:]), "\n")
 		} else if contentType == contentTypeTextHtml {
-			ppContent, err := ioutil.ReadAll(part)
+			ppContent, err := parseText(params["charset"], part.Header.Get("Content-Transfer-Encoding"), part)
 			if err != nil {
 				return textBody, htmlBody, attachments, embeddedFiles, err
 			}
@@ -271,6 +274,41 @@ func parseMultipartMixed(msg io.Reader, boundary string) (textBody, htmlBody str
 	}
 
 	return textBody, htmlBody, attachments, embeddedFiles, err
+}
+
+func parseText(charsetStr, encoding string, partReader io.Reader) ([]byte, error) {
+	part, err := ioutil.ReadAll(partReader)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	// deal with charset
+	if strings.ToLower(charsetStr) == "iso-8859-1" {
+		var cr io.Reader
+		cr, err = charset.NewReader("latin1", bytes.NewReader(part))
+		if err != nil {
+			return []byte{}, err
+		}
+
+		part, err = ioutil.ReadAll(cr)
+		if err != nil {
+			return []byte{}, err
+		}
+	}
+
+	// deal with encoding
+	var body []byte
+	if strings.ToLower(encoding) == "quoted-printable" {
+		dec := qprintable.NewDecoder(qprintable.WindowsTextEncoding, bytes.NewReader(part))
+		body, err = ioutil.ReadAll(dec)
+		if err != nil {
+			return []byte{}, err
+		}
+	} else {
+		body = part
+	}
+
+	return body, nil
 }
 
 func decodeMimeSentence(s string) string {
