@@ -26,6 +26,11 @@ func Parse(r io.Reader) (email Email, err error) {
 		return
 	}
 
+	return ParseEmailMessage(msg)
+}
+
+// ParseEmailMessage parses an email given a mail.Message from the stdlib.
+func ParseEmailMessage(msg *mail.Message) (email Email, err error) {
 	email, err = createEmailFromHeader(msg.Header)
 	if err != nil {
 		return
